@@ -1,0 +1,23 @@
+# Secrets and local settings
+.env
+
+# Client data (the CSV files must not be committed)
+data/*.csv
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+
+frontend/node_modules/
+frontend/dist/

@@ -1,0 +1,84 @@
+# Runs the database, the API and (on request) the tests for local development.
+# Settings come from the .env file (copy .env.example to .env first).
+
+# Shared by the api and tests services. DB_USER is the limited login that
+# row-level security applies to. The owner login is only for the seed and for
+# creating the test database.
+x-api-env: &api-env
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${POSTGRES_DB}
+  DB_USER: recruiting_app
+  DB_PASSWORD: ${APP_DB_PASSWORD}
+  DB_OWNER_USER: ${POSTGRES_USER}
+  DB_OWNER_PASSWORD: ${POSTGRES_PASSWORD}
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}
+      # Names like Nguyễn and Sofía need a UTF-8 database.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Postgres runs these once, in this order, when the data volume is first created.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./db/app_login.sh:/docker-entrypoint-initdb.d/02_app_login.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./api
+    environment: *api-env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      # Code is mounted so edits reload the server without a rebuild.
+      - ./api/app:/code/app
+      # The CSV files, read-only. The seed reads data/recruiters.csv on every start.
+      - ./data:/data:ro
+    # Loads the recruiters, then starts the server with auto-reload.
+    command: sh start.sh --reload
+
+  # Run with: docker compose run --rm tests
+  tests:
+    build: ./api
+    profiles: ["tests"]
+    environment: *api-env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./api/app:/code/app
+      - ./api/tests:/code/tests
+      # The tests build their database from this same schema file.
+      - ./db:/db:ro
+      - ./data:/data:ro
+    command: pytest
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      # The source files are mounted, so edits show up without a rebuild.
+      # node_modules stays inside the image. Changing package.json needs a rebuild.
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+    depends_on:
+      - api
+
+volumes:
+  db_data:
